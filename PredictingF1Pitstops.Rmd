@@ -1,0 +1,1995 @@
+---
+title: "Predicting F1 Pitstops"
+author: "Niklas Pettersson-Fox"
+date: "2026-05-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+Inital set up of data and cleaning.
+
+```{r dataset,  echo = FALSE}
+set.seed(123)
+train <- read.csv("train.csv")
+```
+
+
+```{r data1, echo = FALSE}
+train$Compound <- as.factor(train$Compound)
+train$Race <- as.factor(train$Race)
+train$Year <- as.factor(train$Year)
+train$PitStop <- as.factor(train$PitStop)
+train$PitNextLap <- as.factor(train$PitNextLap)
+summary(train)
+```
+
+As depicted in the summary we can see some unusual values that need to be taken care of. Lap time of 2507 needs to be removed as in F1, lap times are usually in the range of 1-2 minutes or 60-120 seconds hence we will remove any lap times larger than 10 minutes as this will give some leeway for laps where it was raining. This will take care of the Laptime delta  which has a few extreme cases. My guess is that this lap is due to some racing incident, leaving the driver unable to finish the lap whilst the clock was still running. Let's have a look.
+
+```{r laptime, echo = FALSE}
+lap_toolarge_i <- which(train$LapTime..s. > 600)
+lap_tooLarge_train <- train[lap_toolarge_i,]
+train <- train[-lap_toolarge_i,]
+```
+
+## Visualisation of relationships
+
+As there are 439120 observations, we will sample 5000 of them for visualisation and compute purposes.
+
+```{r plots1, echo = FALSE}
+train_sample_i <- sample(1:nrow(train), size = 5000)
+train_sampled <- train[train_sample_i,]
+pairs(train_sampled[,5:16])
+#plot(train$TyreLife, train$Stint, main = "Tyre Life vs Stint", xlab = "TyreLife", ylab = "Stint")
+```
+Some cause for concern is the LapNumber and RaceProgression, as the latter is a function of the former, hence we will RaceProgression. All other variables are can be used. No clear sign of a need for transforming the variables but we can look into that later.
+
+```{r cleaning, echo = FALSE}
+train_sampled <- train_sampled[,-14]
+```
+
+## Modelling and predictions
+
+Let's go for a simple model of predicting the whether we pit on the next lap using LapNumber, TyreLife and Cumulative_Degradation. We will then predict on another sample of 5000 observations for testing purposes and compute accuracy score for this simple baseline model.
+
+```{r modeling}
+
+library(dplyr)
+
+logistic_model <- glm(PitNextLap ~ LapNumber + TyreLife,
+                    data = train_sampled,
+                    family = "binomial")
+logistic_model
+
+summary(logistic_model)
+```
+
+```{r precitions, echo = FALSE}
+predict_reg <- predict(logistic_model,
+                       train_sampled, type = "response")
+for(i in 1:length(predict_reg)){
+  pred <- predict_reg[i]
+  if(pred >= 0.5){
+    predict_reg[i] <- 1
+  }
+  else{
+    predict_reg[i] <- 0
+  }
+}
+predict_reg <- as.data.frame(as.factor(predict_reg))
+```
+
+```{r confusionMatrix, echo = FALSE}
+library(ggplot2)
+library(reshape2)
+
+conf_matrix <- table(train_sampled$PitNextLap, predict_reg$`as.factor(predict_reg)`)
+
+# Reshape the confusion matrix for ggplot2
+conf_matrix_melted <- as.data.frame(conf_matrix)
+colnames(conf_matrix_melted) <- c("Actual", "Predicted", "Count")
+
+ggplot(conf_matrix_melted, aes(x = Actual, y = Predicted, fill = Count)) +
+  geom_tile() +
+  geom_text(aes(label = Count), color = "black", size = 6) +  # Add text labels
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+```
+
+```{r accuracy, echo = FALSE}
+accuracy_score <- sum(train_sampled$PitNextLap == predict_reg$`as.factor(predict_reg)`)/5000
+
+paste("Accuracy Score of:", accuracy_score)
+```
+A good baseline prediction accuracy of 0.7944. We will now do a model with all of the variables included and remove all statistically insignificant variables, one at a time.
+```{r modelling2, echo = FALSE}
+logistic_model2 <- glm(PitNextLap ~ .,
+                    data = train_sampled[,-c(1,2)],
+                    family = binomial(link = "logit"))
+summary(logistic_model2)
+```
+
+```{r prediction, include=FALSE}
+logistic_model3 <- glm(PitNextLap ~ .,
+                    data = train_sampled[,-c(1,2)],
+                    family = binomial(link = "logit"))
+summary(logistic_model3)
+```
+
+```{r prediction3, include=FALSE}
+train_sampled <- train_sampled[,-c(10)]
+logistic_model4 <- glm(PitNextLap ~ .,
+                    data = train_sampled[,-c(1,2)],
+                    family = binomial(link = "logit"))
+summary(logistic_model4)
+```
+
+```{r prediction4, include=FALSE}
+train_sampled <- train_sampled[,-c(11)]
+logistic_model5 <- glm(PitNextLap ~ .,
+                    data = train_sampled[,-c(1,2)],
+                    family = binomial(link = "logit"))
+summary(logistic_model5)
+```
+
+```{r prediction5, include=FALSE}
+train_sampled <- train_sampled[,-c(10)]
+logistic_model6 <- glm(PitNextLap ~ .,
+                    data = train_sampled[,-c(1,2)],
+                    family = binomial(link = "logit"))
+summary(logistic_model6)
+```
+
+```{r prediction2, echo = FALSE}
+predict_reg2 <- predict(logistic_model6,
+                       train_sampled, type = "response")
+for(i in 1:length(predict_reg2)){
+  pred <- predict_reg2[i]
+  if(pred > 0.5){
+    predict_reg2[i] <- 1
+  }
+  else{
+    predict_reg2[i] <- 0
+  }
+}
+predict_reg2 <- as.data.frame(as.factor(predict_reg2))
+
+
+conf_matrix <- table(train_sampled$PitNextLap, predict_reg2[[1]])
+
+# Reshape the confusion matrix for ggplot2
+conf_matrix_melted <- as.data.frame(conf_matrix)
+colnames(conf_matrix_melted) <- c("Actual", "Predicted", "Count")
+
+ggplot(conf_matrix_melted, aes(x = Actual, y = Predicted, fill = Count)) +
+  geom_tile() +
+  geom_text(aes(label = Count), color = "black", size = 6) +  # Add text labels
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+accuracy_score <- sum(train_sampled$PitNextLap == as.vector(predict_reg2[[1]]))/5000
+
+paste("Accuracy Score of:", accuracy_score)
+```
+
+Now that we have narrowed down the variables we can take a closer look at the relationships of our variables and see if a transformation can improve our predictions.
+
+```{r visualisations, echo = FALSE}
+pairs(train_sampled[,-c(1:4)])
+```
+TyreLife appears to be quite spread so a we will log transform this and re run our model.
+
+```{r transform, echo = FALSE}
+train_sampled$TyreLife <- log(train_sampled$TyreLife)
+
+logistic_model7 <- glm(PitNextLap ~ .,
+                    data = train_sampled[,-c(1,2)],
+                    family = binomial(link = "logit"))
+
+
+predict_reg2 <- predict(logistic_model7,
+                       train_sampled, type = "response")
+for(i in 1:length(predict_reg2)){
+  pred <- predict_reg2[i]
+  if(pred > 0.5){
+    predict_reg2[i] <- 1
+  }
+  else{
+    predict_reg2[i] <- 0
+  }
+}
+predict_reg2 <- as.data.frame(as.factor(predict_reg2))
+
+
+conf_matrix <- table(train_sampled$PitNextLap, predict_reg2[[1]])
+
+# Reshape the confusion matrix for ggplot2
+conf_matrix_melted <- as.data.frame(conf_matrix)
+colnames(conf_matrix_melted) <- c("Actual", "Predicted", "Count")
+
+ggplot(conf_matrix_melted, aes(x = Actual, y = Predicted, fill = Count)) +
+  geom_tile() +
+  geom_text(aes(label = Count), color = "black", size = 6) +  # Add text labels
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+accuracy_score <- sum(train_sampled$PitNextLap == as.vector(predict_reg2[[1]]))/5000
+
+paste("Accuracy Score of:", accuracy_score)
+```
+
+
+
+It looks like log transformation was a good idea. Improving our accuracy score by 1%. 
+
+
+```{r submission, echo = FALSE}
+test <- read.csv("test.csv")
+test_cleaned <- test[ ,-c(15,12, 11,10)]
+test_cleaned$Compound <- as.factor(test_cleaned$Compound)
+test_cleaned$Race <- as.factor(test_cleaned$Race)
+test_cleaned$Year <- as.factor(test_cleaned$Year)
+test_cleaned$PitStop <- as.factor(test_cleaned$PitStop)
+test_cleaned$TyreLife <- log(test_cleaned$TyreLife)
+
+train_cleaned <- train[ ,-c(15,12, 11,10)]
+train_cleaned$TyreLife <- log(train_cleaned$TyreLife)
+
+logistic_model8 <- glm(PitNextLap ~ .,
+                    data = train_cleaned[,-c(1,2)],
+                    family = binomial(link = "logit"))
+
+predict_reg2 <- predict(logistic_model8,
+                       test_cleaned, type = "response")
+submissiofileLogistic <- data.frame(id = test_cleaned$id, PitNextLap = predict_reg2)
+write.csv(submissiofileLogistic, file = "F1SubmissionLogistic.csv", row.names = FALSE)
+```
+
+Our Logistic Regression Classifier resulted in a 89.27 AUC score on the Kaggle Test set, very good result for a baseline model.
+
+## Random Forests
+
+Now that we have exhausted the capabilities of logistic regression, we will move on to more complex methods, starting with Random Forests. We will start with a default number of trees 500 and mtry (the number of randomly chosen variables to choose from when deciding which variable to split from) chosen to be the square root of the number of variables, this being the most common practice and recommendation when working with random forests.
+
+
+```{r RandomForest, echo = FALSE}
+# Install if needed: 
+#install.packages(c("randomForest", "caret", "pROC"))
+library(randomForest)
+library(pROC)
+train <- read.csv("train.csv")
+# Using the same prepared mtcars data from before
+set.seed(123)  # for reproducibility
+
+train_idx <- sample(1:nrow(train), size = round(nrow(train)*0.7))
+test_idx <- seq(1,nrow(train))
+test_idx <- test_idx[-train_idx]
+trainlocal <- train[train_idx, ]
+testlocal <- train[-train_idx,]
+```
+
+```{r RandomForests2, echo = FALSE}
+
+# Fit Random Forest
+rf_model <- randomForest(PitNextLap ~ ., 
+                         data = trainlocal[,-c(1,2)], 
+                         ntree = 500,          # number of trees
+                         mtry = 4,             # variables tried at each split
+                         importance = TRUE)
+
+# Predictions on test set
+rf_pred_prob <- predict(rf_model, testlocal, type = "prob")[, 2]  # probability of PitNextLap=1
+rf_pred_class <- predict(rf_model, testlocal)                     # class prediction
+
+# Accuracy
+
+conf_matrix <- table(testlocal$PitNextLap, rf_pred_class)
+
+# Reshape the confusion matrix for ggplot2
+conf_matrix_melted <- as.data.frame(conf_matrix)
+colnames(conf_matrix_melted) <- c("Actual", "Predicted", "Count")
+
+ggplot(conf_matrix_melted, aes(x = Actual, y = Predicted, fill = Count)) +
+  geom_tile() +
+  geom_text(aes(label = Count), color = "black", size = 6) +  # Add text labels
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+accuracy_score <- sum(testlocal$PitNextLap == rf_pred_class)/nrow(testlocal)
+
+paste("Accuracy Score of:", accuracy_score)
+# ROC-AUC
+roc_rf <- roc(testlocal$PitNextLap, rf_pred_prob)
+print(auc(roc_rf))
+plot(roc_rf, main = "Random Forest ROC Curve")
+
+# Feature importance
+importance(rf_model)
+varImpPlot(rf_model)
+```
+The Random Forest proved to be a better predictor than logistic regression.
+
+```{r RF_Submission, echo = FALSE}
+test$Compound <- as.factor(test$Compound)
+test$Race <- as.factor(test$Race)
+test$Year <- as.factor(test$Year)
+test$PitStop <- as.factor(test$PitStop)
+rf_pred_class_Submission <- predict(rf_model, test[, -c(1,2)], type = "prob")[, 2] 
+submissiofilerf <- data.frame(id = test$id, PitNextLap = rf_pred_class_Submission)
+write.csv(submissiofilerf, file = "F1SubmissionRandomForest.csv", row.names = FALSE)
+```
+Time to tune the Random Forest. 
+We have a huge class imbalance, roughly 80/20. This needs to be taken into consideration when modelling as we can get 80% accuracy if we just predict all observations to not pit on the next lap, but this leads to inaccurate and a false confidence in our predictions. Due to the imbalance we have a high type ii error, false positives and so our metric we need to improve is recall instead of accuracy.
+
+```{r RFTuned, echo = FALSE}
+# Fit Random Forest
+rf_model <- randomForest(PitNextLap ~ ., 
+                         data = trainlocal[,-c(1,2)], 
+                         ntree = 800,          # number of trees
+                         mtry = 4,
+                         sampsize = c(0.7 * sum(trainlocal$PitNextLap == 0),   # sample this many from majority
+                                      0.7 * sum(trainlocal$PitNextLap == 1)),  # sample almost all from minority             # variables tried at each split
+                         strata = trainlocal$PitNextLap,
+                         importance = TRUE)
+
+class_counts <- table(trainlocal$PitNextLap)          # replace 'target' with your actual column
+class_weights <- length(trainlocal$PitNextLap) / (2 * class_counts)
+
+final_rf <- randomForest(PitNextLap ~ ., 
+                         data = trainlocal[-c(1,2)],
+                         ntree = 500,
+                         mtry = 4,               # tune this
+                         classwt = class_weights,   # <-- key line
+                         importance = TRUE)
+# Predictions on test set
+rf_pred_prob <- predict(rf_model, testlocal, type = "prob")[, 2]  # probability of PitNextLap=1
+rf_pred_class <- predict(rf_model, testlocal)                     # class prediction
+
+print(final_rf)
+# Accuracy
+
+conf_matrix <- table(testlocal$PitNextLap, rf_pred_class)
+
+# Reshape the confusion matrix for ggplot2
+conf_matrix_melted <- as.data.frame(conf_matrix)
+colnames(conf_matrix_melted) <- c("Actual", "Predicted", "Count")
+
+ggplot(conf_matrix_melted, aes(x = Actual, y = Predicted, fill = Count)) +
+  geom_tile() +
+  geom_text(aes(label = Count), color = "black", size = 6) +  # Add text labels
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+accuracy_score <- sum(testlocal$PitNextLap == rf_pred_class)/nrow(testlocal)
+true_positives <- testlocal$PitNextLap[which(testlocal$PitNextLap == 1)]
+recall <- sum(true_positives == rf_pred_class[which(testlocal$PitNextLap == 1)])/length(true_positives)
+
+paste("Accuracy Score of:", accuracy_score)
+paste("Recall Score of:", recall)
+# ROC-AUC
+roc_rf <- roc(testlocal$PitNextLap, rf_pred_prob)
+print(auc(roc_rf))
+plot(roc_rf, main = "Random Forest ROC Curve")
+
+# Feature importance
+importance(rf_model)
+varImpPlot(rf_model)
+```
+
+```{r RF2, echo = FALSE}
+n_trees = c(500,750)
+mtry_list <- c(3,4,5)
+train$Driver <- as.factor(train$Driver)
+train_sampled <- train[sample(20000), ]
+accuracy_matrix <- matrix(0, nrow = 5, ncol = length(n_trees)*length(mtry_list))
+j <- 1
+l <- 1
+
+class_counts <- table(train$PitNextLap)          # replace 'target' with your actual column
+class_weights <- length(train$PitNextLap) / (2 * class_counts)
+
+for(n_tree in n_trees){
+  for(mt in mtry_list){
+    # 1. Setup
+    set.seed(123) # For reproducibility
+    k <- 5
+    data <- train_sampled[sample(nrow(train_sampled)), ] # Shuffle data
+
+    # 2. Create Fold Indices
+    folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
+    errors <- numeric(k)
+    
+    # 3. Perform Cross-Validation
+    for(i in 1:k) {
+        # Split into train and test
+        test_indices <- which(folds == i, arr.ind = TRUE)
+        test_data <- data[test_indices, ]
+        train_data <- data[-test_indices, ]
+        
+        rf_model <- randomForest(PitNextLap ~ ., 
+                         data = train_data[,-c(1,2)], 
+                         ntree = n_tree,          # number of trees
+                         mtry = mt, 
+                         classwt = class_weights,
+                         # variables tried at each split
+                         importance = TRUE)
+        rf_pred_class <- predict(rf_model, test_data) 
+
+        accuracy_matrix[i,l] <- sum(test_data$PitNextLap == rf_pred_class)/nrow(test_data)
+        accuracy_score <- sum(test_data$PitNextLap == rf_pred_class)/nrow(test_data)
+        true_positives <- test_data$PitNextLap[which(test_data$PitNextLap == 1)]
+        recall <- sum(true_positives == rf_pred_class[which(test_data$PitNextLap == 1)])/length(true_positives)
+
+        cat("Accuracy Score of:", accuracy_score, "ntree:",n_tree, "mtry:", mt, "\n")
+        cat("Recall Score of:", recall, "\n")
+
+    }
+    names(accuracy_matrix)[l] <- paste0(n_tree,"plus",mt)
+    l <- l + 1
+
+
+  }
+}
+
+accuracy_matrix
+```
+The class imbalance is still an issue as our recall is still hovering around the 63% range, we should ideally bring this up above 70% so we will test different thresholds for prediction to see which improves recall the most. We will use a RF with 500 trees and mtry of 4 as this turns out to be the best as initially chosen.
+
+```{r recallimprovement, echo = FALSE}
+# 1. Setup
+set.seed(123) # For reproducibility
+k <- 5
+data <- train_sampled[sample(nrow(train_sampled)), ] # Shuffle data
+
+# 2. Create Fold Indices
+folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
+errors <- numeric(k)
+prediction_mat <- matrix(0, nrow = k, ncol = length(thresholds)*2)
+# 3. Perform Cross-Validation
+for(i in 1:k) {
+    # Split into train and test
+    test_indices <- which(folds == i, arr.ind = TRUE)
+    test_data <- data[test_indices, ]
+    train_data <- data[-test_indices, ]
+    
+    rf_model <- randomForest(PitNextLap ~ ., 
+                     data = train_data[,-c(1,2)], 
+                     ntree = 500,          # number of trees
+                     mtry = 4, 
+                     classwt = class_weights,
+                     # variables tried at each split
+                     importance = TRUE)
+    pred_prob <- predict(rf_model, test_data, type = "prob")[, "1"] 
+    # Try different thresholds
+    thresholds <- seq(0.25, 0.55, by = 0.05)
+    thcol <- 1
+    for(th in thresholds){
+      pred_class <- ifelse(pred_prob > th, 1, 0)
+      accuracy_score <- sum(test_data$PitNextLap == pred_class)/nrow(test_data)
+      true_positives <- test_data$PitNextLap[which(test_data$PitNextLap == 1)]
+      recall <- sum(true_positives == pred_class[which(test_data$PitNextLap == 1)])/length(true_positives)
+      prediction_mat[i, thcol] <- accuracy_score
+      prediction_mat[i, thcol+1] <- recall
+      cat("Accuracy Score of:", accuracy_score, "threshold:",th, "\n")
+      cat("Recall Score of:", recall, "\n")
+      thcol <- thcol + 2
+    }
+
+}
+
+```
+
+```{r plotthreshold, echo = FALSE}
+predictionmatmean <- colMeans(prediction_mat)
+accuracymean <- predictionmatmean[seq(1,14, by = 2)]
+recallmean <- predictionmatmean[seq(2,14, by = 2)]
+
+plot(accuracymean, recallmean, main = "accuracy vs recall for differing prediciton thresholds")
+predictionmatmean
+```
+As we can see, with a threshold of 0.25 our recall is very high (~0.85) and a very similar accuracy (~0.865) but we are missing out on 1-2% overall accuracy, but as seen in the test set on kaggle, it appears that the test set has more positives than in our training set, hence a higher recall may be a good idea. Lets run on the full data with this threshold and see how it plays out.
+
+```{r recallimprovedsubmissionRF, echo = FALSE}
+test$Compound <- as.factor(test$Compound)
+test$Race <- as.factor(test$Race)
+test$Year <- as.factor(test$Year)
+test$PitStop <- as.factor(test$PitStop)
+test$Driver <- as.factor(test$Driver)
+library(randomForest)
+rf_model <- randomForest(PitNextLap ~ ., 
+                 data = train[,-c(1,2)], 
+                 ntree = 500,          # number of trees
+                 mtry = 4, 
+                 classwt = class_weights,
+                 # variables tried at each split
+                 importance = TRUE)
+print(rf_model)
+plot(rf_model)
+importance(rf_model)
+varImpPlot(rf_model)
+pred_prob <- predict(rf_model, test, type = "prob")[, "1"] 
+submissiofileRF <- data.frame(id = test$id, PitNextLap = pred_prob)
+write.csv(submissiofileRF, file = "F1SubmissionRF_RecallImproved.csv", row.names = FALSE)
+```
+As we can see from the variable importance plot, the race track was the most important in terms of increasing the accuracy, closely followed by Stint, Tyrelife and Year, as when we drop these variable separately, we see the largest mean drop in accuracy. That is interesting as you would not imagine that the race track itself would be the most important feature, intuitively the Stint would be the most important feature but different track, wear the tyres in different ways, some track will wear out the tyres more and or require different tyre change tactics that are not solely dependent on tyre wear, but more about a tactical pit to get out of traffic so that the driver has free air in front of him to set fast laps.
+
+
+Perhaps we can manufacture a variable called rollavgdelta. This variable would be a rolling average lap time delta of the last 5 laps. Why I believe this could be useful is the fact that a driver may decide to pit or the team will make the driver pit if they notice a drop off in lap times consistently and so if the rolling average delta is positive, this would indicate there pace is dropping and is likely due to tyre wear and an indication of a need to pit. 
+
+There is an issue with doing this as the training data is sampled from the full data, hence we do not have consecutive laps all of the time. Hence we only calculate the rolling average where the laps are consecutive for at least 3 laps.
+
+
+```{r eval=FALSE, include=FALSE, rolling_avg_lap_delta, echo=FALSE}
+library(data.table)
+library(dplyr)
+
+create_consecutive_rolling_features <- function(data) {
+  setDT(data)
+  
+  # Ensure correct ordering
+  data <- data[order(Driver, Race, Year, LapNumber)]
+  
+  # Create a group identifier for consecutive lap streaks
+  data[, LapDiff := LapNumber - shift(LapNumber, 1, fill = NA),
+       by = .(Driver, Race, Year)]
+  
+  data[, StreakID := cumsum(LapDiff != 1 | is.na(LapDiff)),
+       by = .(Driver, Race, Year)]
+  
+  # Calculate LapTimeDelta only within streak
+  data[, LapTimeDelta := LapTime_Delta,
+       by = .(Driver, Race, Year, StreakID)]
+  
+  # Rolling features — only when streak has enough laps
+  data[, `:=`(
+    RollingAvgDelta_5 = ifelse(.N >= 3,
+                               frollmean(LapTimeDelta, n = 5, align = "right", na.rm = TRUE),
+                               0),
+    RollingAvgDelta_3 = ifelse(.N >= 3,
+                               frollmean(LapTimeDelta, n = 3, align = "right", na.rm = TRUE),
+                               0),
+    RollingAvgDelta_10 = ifelse(.N >= 5,
+                                frollmean(LapTimeDelta, n = 10, align = "right", na.rm = TRUE),
+                                0),
+    RollingStdDelta_5 = ifelse(.N >= 4,
+                               frollapply(LapTimeDelta, n = 5, FUN = sd, na.rm = TRUE),
+                               0)
+  ), by = .(Driver, Race, Year, StreakID)]
+  
+  # Additional useful features
+  data[, `:=`(
+    TireDegradationTrend = RollingAvgDelta_5 * TyreLife,     # interaction
+    IsDegradingFast = as.integer(RollingAvgDelta_5 > 0.3),   # tunable threshold
+    RecentPaceDrop = RollingAvgDelta_3 > 0.15
+  )]
+  
+  # Clean up temporary columns
+  data[, c("LapDiff", "StreakID") := NULL]
+  
+  return(as_tibble(data))   # convert back to tibble if you prefer
+}
+
+
+# Apply it
+trainrolling <- create_consecutive_rolling_features(train)
+summary(trainrolling)
+testrolling  <- create_consecutive_rolling_features(test)
+
+trainrolling$RollingStdDelta_5[is.na(trainrolling$RollingStdDelta_5)] <- 0
+testrolling$RollingStdDelta_5[is.na(testrolling$RollingStdDelta_5)] <- 0
+trainrolling$RollingAvgDelta_10[is.na(trainrolling$RollingAvgDelta_10)] <- 0
+testrolling$RollingAvgDelta_10[is.na(testrolling$RollingAvgDelta_10)] <- 0
+trainrolling$RollingAvgDelta_5[is.na(trainrolling$RollingAvgDelta_5)] <- 0
+testrolling$RollingAvgDelta_5[is.na(testrolling$RollingAvgDelta_5)] <- 0
+```
+
+This code does not work as we do not have consecutive laps to work with in a meaningful way.
+
+## XGBoost
+
+```{r XGBoost, echo = FALSE}
+# =============================================
+# XGBoost Starter Code for Binary Classification
+# With class imbalance handling (80/20) + mixed predictors
+# =============================================
+#install.packages("xgboost", 
+#                type = "binary", 
+#                 repos = "https://cran.rstudio.com/")
+#install.packages("caret", 
+#                 type = "binary", 
+#                 repos = "https://cran.rstudio.com/")
+library(xgboost)
+library(caret)      # for dummyVars + train/test split
+library(pROC)       # for AUC
+library(dplyr)
+library(data.table)
+
+# Assume you already have:
+# train and test data frames
+# target column called 'target' (0/1)
+
+# =============================================
+# CLEANED XGBoost Training Block
+# =============================================
+
+# Make sure target is 0/1 numeric
+trainlocal$PitNextLap <- as.numeric(trainlocal$PitNextLap)# Important: 0 and 1
+testlocal$PitNextLap  <- as.numeric(testlocal$PitNextLap) 
+
+# Identify categorical variables
+cat_vars <- names(trainlocal)[sapply(trainlocal, function(x) is.factor(x) || is.character(x))]
+
+# ====================== FEATURE PREPARATION ======================
+if(length(cat_vars) > 0){
+  
+  # Train dummies
+  cat_data_train <- as.data.frame(trainlocal[, cat_vars, drop = FALSE])
+  dummies <- dummyVars(~ ., data = cat_data_train)
+  dummy_train <- predict(dummies, cat_data_train)
+  
+  # Numeric columns
+  num_cols <- setdiff(names(trainlocal), c(cat_vars, "PitNextLap"))
+  X_train <- cbind(as.data.frame(trainlocal[, num_cols, drop = FALSE]), dummy_train)
+  
+  # Test dummies (using same dummy structure)
+  cat_data_test <- as.data.frame(testlocal[, cat_vars, drop = FALSE])
+  dummy_test <- predict(dummies, cat_data_test)
+  X_test <- cbind(as.data.frame(testlocal[, num_cols, drop = FALSE]), dummy_test)
+  
+} else {
+  X_train <- as.data.frame(trainlocal %>% select(-PitNextLap))
+  X_test  <- as.data.frame(testlocal %>% select(-PitNextLap))
+}
+# ====================== FIX FEATURE ALIGNMENT ======================
+
+# Make sure test has exactly the same columns as train (in same order)
+common_cols <- intersect(names(X_train), names(X_test))
+
+# Add missing columns to test (filled with 0)
+missing_in_test <- setdiff(names(X_train), names(X_test))
+for (col in missing_in_test) {
+  X_test[[col]] <- 0
+}
+
+# Add missing columns to train (just in case)
+missing_in_train <- setdiff(names(X_test), names(X_train))
+for (col in missing_in_train) {
+  X_train[[col]] <- 0
+}
+
+# Re-order test columns to match train exactly
+X_test <- X_test[, names(X_train), drop = FALSE]
+
+# Now create DMatrix again
+dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = trainlocal$PitNextLap)
+dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = testlocal$PitNextLap)
+
+cat("Feature alignment fixed. Total features:", ncol(X_train), "\n")
+
+# ====================== CLASS IMBALANCE ======================
+pos_weight <- sum(trainlocal$PitNextLap == 0) / sum(trainlocal$PitNextLap == 1)
+cat("scale_pos_weight:", round(pos_weight, 2), "\n")
+
+# ====================== CHECK CLASS DISTRIBUTION ======================
+cat("Train class distribution:\n")
+print(table(trainlocal$PitNextLap))
+cat("Test class distribution:\n")
+print(table(testlocal$PitNextLap))
+
+# ====================== MODEL TRAINING ======================
+params <- list(
+  objective         = "binary:logistic",
+  eval_metric       = "logloss",          # safe choice
+  eta               = 0.05,
+  max_depth         = 6,
+  subsample         = 0.8,
+  colsample_bytree  = 0.8,
+  scale_pos_weight  = pos_weight,
+  gamma             = 1,
+  min_child_weight  = 1,
+  nthread           = parallel::detectCores() - 1
+)
+
+set.seed(123)
+
+xgb_model <- xgb.train(
+  params            = params,
+  data              = dtrain,
+  nrounds           = 500,
+  watchlist         = list(train = dtrain, test = dtest),
+  early_stopping_rounds = 50,
+  verbose           = 10
+)
+
+# ====================== PREDICTIONS ======================
+pred_prob <- predict(xgb_model, dtest)
+pred_class <- ifelse(pred_prob > 0.5, 1, 0)
+
+# Evaluation
+library(caret)
+cm <- confusionMatrix(factor(pred_class, levels = c(0,1)),
+                      factor(testlocal$PitNextLap, levels = c(0,1)),
+                      positive = "1")
+print(cm)
+```
+
+```{r XGBoostSubmission, echo = FALSE}
+
+# =============================================
+# XGBoost Starter Code for Binary Classification
+# With class imbalance handling (80/20) + mixed predictors
+# =============================================
+
+
+# Assume you already have:
+# train and test data frames
+# target column called 'target' (0/1)
+
+# =============================================
+# CLEANED XGBoost Training Block
+# =============================================
+
+train_idx <- sample(1:nrow(train), size = round(nrow(train)*0.7))
+trainlocal <- train[train_idx,-c(1,2)]
+testlocal <- train[-train_idx,-c(1,2)]
+
+# Make sure target is 0/1 numeric
+trainlocal$PitNextLap <- as.numeric(trainlocal$PitNextLap) - 1# Important: 0 and 1
+testlocal$PitNextLap <- as.numeric(testlocal$PitNextLap) - 1
+
+# Identify categorical variables
+cat_vars <- names(trainlocal)[sapply(trainlocal, function(x) is.factor(x) || is.character(x))]
+
+# ====================== FEATURE PREPARATION ======================
+if(length(cat_vars) > 0){
+  
+  # Train dummies
+  cat_data_train <- as.data.frame(trainlocal[, cat_vars, drop = FALSE])
+  dummies <- dummyVars(~ ., data = cat_data_train)
+  dummy_train <- predict(dummies, cat_data_train)
+  
+  # Numeric columns
+  num_cols <- setdiff(names(trainlocal), c(cat_vars, "PitNextLap"))
+  X_train <- cbind(as.data.frame(trainlocal[, num_cols, drop = FALSE]), dummy_train)
+  
+  # Test dummies (using same dummy structure)
+  cat_data_test <- as.data.frame(testlocal[, cat_vars, drop = FALSE])
+  dummy_test <- predict(dummies, cat_data_test)
+  X_test <- cbind(as.data.frame(testlocal[, num_cols, drop = FALSE]), dummy_test)
+  
+} else {
+  X_train <- as.data.frame(trainlocal %>% select(-PitNextLap))
+  X_test  <- as.data.frame(testlocal %>% select(-PitNextLap))
+}
+# ====================== FIX FEATURE ALIGNMENT ======================
+
+# Make sure test has exactly the same columns as train (in same order)
+common_cols <- intersect(names(X_train), names(X_test))
+
+# Add missing columns to test (filled with 0)
+missing_in_test <- setdiff(names(X_train), names(X_test))
+for (col in missing_in_test) {
+  X_test[[col]] <- 0
+}
+
+# Add missing columns to train (just in case)
+missing_in_train <- setdiff(names(X_test), names(X_train))
+for (col in missing_in_train) {
+  X_train[[col]] <- 0
+}
+
+# Re-order test columns to match train exactly
+X_test <- X_test[, names(X_train), drop = FALSE]
+
+# Now create DMatrix again
+dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = trainlocal$PitNextLap)
+dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = testlocal$PitNextLap)
+
+cat("Feature alignment fixed. Total features:", ncol(X_train), "\n")
+
+# ====================== CLASS IMBALANCE ======================
+pos_weight <- sum(trainlocal$PitNextLap == 0) / sum(trainlocal$PitNextLap == 1)
+cat("scale_pos_weight:", round(pos_weight, 2), "\n")
+
+# ====================== CHECK CLASS DISTRIBUTION ======================
+cat("Train class distribution:\n")
+print(table(trainlocal$PitNextLap))
+cat("Test class distribution:\n")
+print(table(testlocal$PitNextLap))
+
+# ====================== MODEL TRAINING ======================
+params <- list(
+  objective         = "binary:logistic",
+  eval_metric       = "logloss",          # safe choice
+  eta               = 0.05,
+  max_depth         = 6,
+  subsample         = 0.8,
+  colsample_bytree  = 0.8,
+  scale_pos_weight  = pos_weight,
+  gamma             = 1,
+  min_child_weight  = 1,
+  nthread           = parallel::detectCores() - 1
+)
+
+set.seed(123)
+
+xgb_model <- xgb.train(
+  params            = params,
+  data              = dtrain,
+  nrounds           = 500,
+  watchlist         = list(train = dtrain, test = dtest),
+  early_stopping_rounds = 50,
+  verbose           = 10
+)
+
+# ====================== PREDICTIONS ======================
+# 
+  # Test dummies (using same dummy structure)
+cat_data_test <- as.data.frame(test[, cat_vars, drop = FALSE])
+dummy_test <- predict(dummies, cat_data_test)
+X_test <- cbind(as.data.frame(test[, num_cols, drop = FALSE]), dummy_test)
+#test$PitFinalLap <- as.numeric(test$PitFinalLap) - 1
+dtestfinal  <- xgb.DMatrix(data = as.matrix(X_test))
+pred_prob <- predict(xgb_model, dtestfinal)
+
+# Evaluation
+library(caret)
+cm <- confusionMatrix(factor(pred_class, levels = c(0,1)),
+                      factor(testlocal$PitNextLap, levels = c(0,1)),
+                      positive = "1")
+print(cm)
+
+
+submissionfileXG <- data.frame(id = test$id, PitNextLap = pred_prob)
+write.csv(submissionfileXG, file = "F1SubmissionXG.csv", row.names = FALSE)
+```
+
+First run on XGBoost resulted in a 0.87941 accuracy score on the kaggle test set. Not bad but lets improve our prediction and do some tuning.
+
+```{r XGBoostTuning, echo = FALSE}
+
+traindata <- train[train_idx,-c(1,2)]
+testdata<- train[-train_idx,-c(1,2)]
+traindata$PitNextLap <- as.numeric(traindata$PitNextLap) - 1# Important: 0 and 1
+testdata$PitNextLap  <- as.numeric(testdata$PitNextLap) - 1
+
+set.seed(123) # For reproducibility
+k <- 5
+data <- traindata
+
+# 2. Create Fold Indices
+folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
+errors <- numeric(k)
+thresholds <- seq(0.25, 0.55, by = 0.05)
+prediction_mat <- matrix(0, nrow = k, ncol = length(thresholds)*2)
+# 3. Perform Cross-Validation
+for(i in 1:k) {
+    # Split into train and test
+    test_indices <- which(folds == i, arr.ind = TRUE)
+    testlocal <- data[test_indices, ]
+    trainlocal <- data[-test_indices, ]
+    
+    # Identify categorical variables
+    cat_vars <- names(trainlocal)[sapply(trainlocal, function(x) is.factor(x) || is.character(x))]
+    
+    # ====================== FEATURE PREPARATION ======================
+    if(length(cat_vars) > 0){
+      
+      # Train dummies
+      cat_data_train <- as.data.frame(trainlocal[, cat_vars, drop = FALSE])
+      dummies <- dummyVars(~ ., data = cat_data_train)
+      dummy_train <- predict(dummies, cat_data_train)
+      
+      # Numeric columns
+      num_cols <- setdiff(names(trainlocal), c(cat_vars, "PitNextLap"))
+      X_train <- cbind(as.data.frame(trainlocal[, num_cols, drop = FALSE]), dummy_train)
+      
+      # Test dummies (using same dummy structure)
+      cat_data_test <- as.data.frame(testlocal[, cat_vars, drop = FALSE])
+      dummy_test <- predict(dummies, cat_data_test)
+      X_test <- cbind(as.data.frame(testlocal[, num_cols, drop = FALSE]), dummy_test)
+      
+    } else {
+      X_train <- as.data.frame(trainlocal %>% select(-PitNextLap))
+      X_test  <- as.data.frame(testlocal %>% select(-PitNextLap))
+    }
+    # ====================== FIX FEATURE ALIGNMENT ======================
+    
+    # Make sure test has exactly the same columns as train (in same order)
+    common_cols <- intersect(names(X_train), names(X_test))
+    
+    # Add missing columns to test (filled with 0)
+    missing_in_test <- setdiff(names(X_train), names(X_test))
+    for (col in missing_in_test) {
+      X_test[[col]] <- 0
+    }
+    
+    # Add missing columns to train (just in case)
+    missing_in_train <- setdiff(names(X_test), names(X_train))
+    for (col in missing_in_train) {
+      X_train[[col]] <- 0
+    }
+    
+    # Re-order test columns to match train exactly
+    X_test <- X_test[, names(X_train), drop = FALSE]
+    
+    # Now create DMatrix again
+    dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = trainlocal$PitNextLap)
+    dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = testlocal$PitNextLap)
+    
+    cat("Feature alignment fixed. Total features:", ncol(X_train), "\n")
+    
+    # ====================== CLASS IMBALANCE ======================
+    pos_weight <- sum(trainlocal$PitNextLap == 0) / sum(trainlocal$PitNextLap == 1)
+    cat("scale_pos_weight:", round(pos_weight, 2), "\n")
+    
+    # ====================== CHECK CLASS DISTRIBUTION ======================
+    cat("Train class distribution:\n")
+    print(table(trainlocal$PitNextLap))
+    cat("Test class distribution:\n")
+    print(table(testlocal$PitNextLap))
+    
+    # ====================== MODEL TRAINING ======================
+    params <- list(
+      objective         = "binary:logistic",
+      eval_metric       = "logloss",          # safe choice
+      eta               = 0.05,
+      max_depth         = 6,
+      subsample         = 0.8,
+      colsample_bytree  = 0.8,
+      scale_pos_weight  = pos_weight,
+      gamma             = 1,
+      min_child_weight  = 1,
+      nthread           = parallel::detectCores() - 1
+    )
+    
+    set.seed(123)
+    
+    xgb_model <- xgb.train(
+      params            = params,
+      data              = dtrain,
+      nrounds           = 500,
+      watchlist         = list(train = dtrain, test = dtest),
+      early_stopping_rounds = 50,
+      verbose           = 10
+    )
+    
+    # ====================== PREDICTIONS ======================
+    pred_prob <- predict(xgb_model, dtest)
+    # Evaluation
+
+    # Try different thresholds
+    thcol <- 1
+    for(th in thresholds){
+      pred_class <- ifelse(pred_prob > th, 1, 0)
+      accuracy_score <- sum(testlocal$PitNextLap == pred_class)/nrow(testlocal)
+      true_positives <- testlocal$PitNextLap[which(testlocal$PitNextLap == 1)]
+      recall <- sum(true_positives == pred_class[which(testlocal$PitNextLap == 1)])/length(true_positives)
+      prediction_mat[i, thcol] <- accuracy_score
+      prediction_mat[i, thcol+1] <- recall
+      cat("Accuracy Score of:", accuracy_score, "threshold:",th, "\n")
+      cat("Recall Score of:", recall, "\n")
+      thcol <- thcol + 2
+    }
+
+}
+
+predictionmeans <- colMeans(prediction_mat)
+accuracymeans <- predictionmeans[seq(1,14,by=2)]
+recallmeans <- predictionmeans[seq(2,14,by=2)]
+
+plot(accuracymeans, recallmeans, main = "Accuracy vs Recall means for XGBoost with 5-fold CV")
+```
+Analysing the plot of recall means versus accuracy means, the optimal threshold appears to be around the 0.35 to 0.4 region, at which point we have a high recall of 91.88% and an accuracy score of 85.86%.
+
+Due to the minor change in recall and accuracy from the original threshold of 0.5, I will hold off on submitting another attempt until I have tuned with other parameters but from here on in the threshold we will be testing with 0.35 to 0.45 thresholds.
+
+```{r XGBoostFurtherTuning, echo = FALSE}
+
+traindata <- train[train_idx,-c(1,2)]
+testdata<- train[-train_idx,-c(1,2)]
+traindata$PitNextLap <- as.numeric(traindata$PitNextLap) - 1# Important: 0 and 1
+testdata$PitNextLap  <- as.numeric(testdata$PitNextLap) - 1
+
+set.seed(123) # For reproducibility
+k <- 5
+data <- traindata
+
+# 2. Create Fold Indices
+folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
+errors <- numeric(k)
+thresholds <- seq(0.25, 0.55, by = 0.05)
+prediction_mat <- matrix(0, nrow = k, ncol = length(thresholds)*2)
+# 3. Perform Cross-Validation
+for(i in 1:k) {
+    # Split into train and test
+    test_indices <- which(folds == i, arr.ind = TRUE)
+    testlocal <- data[test_indices, ]
+    trainlocal <- data[-test_indices, ]
+    
+    # Identify categorical variables
+    cat_vars <- names(trainlocal)[sapply(trainlocal, function(x) is.factor(x) || is.character(x))]
+    
+    # ====================== FEATURE PREPARATION ======================
+    if(length(cat_vars) > 0){
+      
+      # Train dummies
+      cat_data_train <- as.data.frame(trainlocal[, cat_vars, drop = FALSE])
+      dummies <- dummyVars(~ ., data = cat_data_train)
+      dummy_train <- predict(dummies, cat_data_train)
+      
+      # Numeric columns
+      num_cols <- setdiff(names(trainlocal), c(cat_vars, "PitNextLap"))
+      X_train <- cbind(as.data.frame(trainlocal[, num_cols, drop = FALSE]), dummy_train)
+      
+      # Test dummies (using same dummy structure)
+      cat_data_test <- as.data.frame(testlocal[, cat_vars, drop = FALSE])
+      dummy_test <- predict(dummies, cat_data_test)
+      X_test <- cbind(as.data.frame(testlocal[, num_cols, drop = FALSE]), dummy_test)
+      
+    } else {
+      X_train <- as.data.frame(trainlocal %>% select(-PitNextLap))
+      X_test  <- as.data.frame(testlocal %>% select(-PitNextLap))
+    }
+    # ====================== FIX FEATURE ALIGNMENT ======================
+    
+    # Make sure test has exactly the same columns as train (in same order)
+    common_cols <- intersect(names(X_train), names(X_test))
+    
+    # Add missing columns to test (filled with 0)
+    missing_in_test <- setdiff(names(X_train), names(X_test))
+    for (col in missing_in_test) {
+      X_test[[col]] <- 0
+    }
+    
+    # Add missing columns to train (just in case)
+    missing_in_train <- setdiff(names(X_test), names(X_train))
+    for (col in missing_in_train) {
+      X_train[[col]] <- 0
+    }
+    
+    # Re-order test columns to match train exactly
+    X_test <- X_test[, names(X_train), drop = FALSE]
+    
+    # Now create DMatrix again
+    dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = trainlocal$PitNextLap)
+    dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = testlocal$PitNextLap)
+    
+    cat("Feature alignment fixed. Total features:", ncol(X_train), "\n")
+    
+    # ====================== CLASS IMBALANCE ======================
+    pos_weight <- sum(trainlocal$PitNextLap == 0) / sum(trainlocal$PitNextLap == 1)
+    cat("scale_pos_weight:", round(pos_weight, 2), "\n")
+    
+    # ====================== CHECK CLASS DISTRIBUTION ======================
+    cat("Train class distribution:\n")
+    print(table(trainlocal$PitNextLap))
+    cat("Test class distribution:\n")
+    print(table(testlocal$PitNextLap))
+    
+    # ====================== MODEL TRAINING ======================
+    params <- list(
+      objective         = "binary:logistic",
+      eval_metric       = "auc",          # changed from logloss
+      eta               = 0.03,           # decreased from 0.05 for a slower learning rate
+      max_depth         = 7,              # increased from 6
+      subsample         = 0.85,           # increased from 0.8
+      colsample_bytree  = 0.75,           # increased from 0.8
+      scale_pos_weight  = pos_weight*1.2, # factor of 1.2 increase
+      gamma             = 0.5,            #  
+      min_child_weight  = 3,
+      max_delta_step    = 1,
+      nthread           = parallel::detectCores() - 1
+    )
+    
+    set.seed(123)
+    
+    xgb_model <- xgb.train(
+      params            = params,
+      data              = dtrain,
+      nrounds           = 500,
+      watchlist         = list(train = dtrain, test = dtest),
+      early_stopping_rounds = 80,
+      verbose           = 20
+    )
+    
+    # ====================== PREDICTIONS ======================
+    pred_prob <- predict(xgb_model, dtest)
+    # Evaluation
+
+    # Try different thresholds
+    thcol <- 1
+    for(th in thresholds){
+      pred_class <- ifelse(pred_prob > th, 1, 0)
+      accuracy_score <- sum(testlocal$PitNextLap == pred_class)/nrow(testlocal)
+      true_positives <- testlocal$PitNextLap[which(testlocal$PitNextLap == 1)]
+      recall <- sum(true_positives == pred_class[which(testlocal$PitNextLap == 1)])/length(true_positives)
+      prediction_mat[i, thcol] <- accuracy_score
+      prediction_mat[i, thcol+1] <- recall
+      cat("Accuracy Score of:", accuracy_score, "threshold:",th, "\n")
+      cat("Recall Score of:", recall, "\n")
+      thcol <- thcol + 2
+    }
+
+}
+
+predictionmeans <- colMeans(prediction_mat)
+accuracymeans <- predictionmeans[seq(1,14,by=2)]
+recallmeans <- predictionmeans[seq(2,14,by=2)]
+
+plot(accuracymeans, recallmeans, main = "Accuracy vs Recall means for XGBoost with 5-fold CV")
+```
+
+```{r XGBoostTunedSubmission, echo = FALSE}
+library(xgboost)
+library(caret)      # for dummyVars + train/test split
+library(pROC)       # for AUC
+library(dplyr)
+library(data.table)
+train_idx <- sample(1:nrow(train), size = round(nrow(train)*0.7))
+trainlocal <- train[train_idx,-c(1,2)]
+testlocal <- train[-train_idx,-c(1,2)]
+
+# Make sure target is 0/1 numeric
+trainlocal$PitNextLap <- as.numeric(trainlocal$PitNextLap) - 1# Important: 0 and 1
+testlocal$PitNextLap <- as.numeric(testlocal$PitNextLap) - 1
+
+# Identify categorical variables
+cat_vars <- names(trainlocal)[sapply(trainlocal, function(x) is.factor(x) || is.character(x))]
+
+# ====================== FEATURE PREPARATION ======================
+if(length(cat_vars) > 0){
+  
+  # Train dummies
+  cat_data_train <- as.data.frame(trainlocal[, cat_vars, drop = FALSE])
+  dummies <- dummyVars(~ ., data = cat_data_train)
+  dummy_train <- predict(dummies, cat_data_train)
+  
+  # Numeric columns
+  num_cols <- setdiff(names(trainlocal), c(cat_vars, "PitNextLap"))
+  X_train <- cbind(as.data.frame(trainlocal[, num_cols, drop = FALSE]), dummy_train)
+  
+  # Test dummies (using same dummy structure)
+  cat_data_test <- as.data.frame(testlocal[, cat_vars, drop = FALSE])
+  dummy_test <- predict(dummies, cat_data_test)
+  X_test <- cbind(as.data.frame(testlocal[, num_cols, drop = FALSE]), dummy_test)
+  
+} else {
+  X_train <- as.data.frame(trainlocal %>% select(-PitNextLap))
+  X_test  <- as.data.frame(testlocal %>% select(-PitNextLap))
+}
+# ====================== FIX FEATURE ALIGNMENT ======================
+
+# Make sure test has exactly the same columns as train (in same order)
+common_cols <- intersect(names(X_train), names(X_test))
+
+# Add missing columns to test (filled with 0)
+missing_in_test <- setdiff(names(X_train), names(X_test))
+for (col in missing_in_test) {
+  X_test[[col]] <- 0
+}
+
+# Add missing columns to train (just in case)
+missing_in_train <- setdiff(names(X_test), names(X_train))
+for (col in missing_in_train) {
+  X_train[[col]] <- 0
+}
+
+# Re-order test columns to match train exactly
+X_test <- X_test[, names(X_train), drop = FALSE]
+
+# Now create DMatrix again
+dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = trainlocal$PitNextLap)
+dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = testlocal$PitNextLap)
+
+cat("Feature alignment fixed. Total features:", ncol(X_train), "\n")
+
+# ====================== CLASS IMBALANCE ======================
+pos_weight <- sum(trainlocal$PitNextLap == 0) / sum(trainlocal$PitNextLap == 1)
+cat("scale_pos_weight:", round(pos_weight, 2), "\n")
+
+# ====================== CHECK CLASS DISTRIBUTION ======================
+cat("Train class distribution:\n")
+print(table(trainlocal$PitNextLap))
+cat("Test class distribution:\n")
+print(table(testlocal$PitNextLap))
+
+# ====================== MODEL TRAINING ======================
+params <- list(
+  objective         = "binary:logistic",
+  eval_metric       = "auc",          # changed from logloss
+  eta               = 0.03,           # decreased from 0.05 for a slower learning rate
+  max_depth         = 7,              # increased from 6
+  subsample         = 0.85,           # increased from 0.8
+  colsample_bytree  = 0.75,           # increased from 0.8
+  scale_pos_weight  = pos_weight*1.2, # factor of 1.2 increase
+  gamma             = 0.5,            #  
+  min_child_weight  = 3,
+  max_delta_step    = 1,
+  nthread           = parallel::detectCores() - 1
+)
+
+set.seed(123)
+
+xgb_model <- xgb.train(
+  params            = params,
+  data              = dtrain,
+  nrounds           = 500,
+  watchlist         = list(train = dtrain, test = dtest),
+  early_stopping_rounds = 80,
+  verbose           = 20
+)
+    
+# ====================== PREDICTIONS ======================
+# 
+  # Test dummies (using same dummy structure)
+
+cat_data_test <- as.data.frame(test[, cat_vars, drop = FALSE])
+dummy_test <- predict(dummies, cat_data_test)
+X_test <- cbind(as.data.frame(test[, num_cols, drop = FALSE]), dummy_test)
+X_test <- as.matrix(X_test[, names(X_train), drop = FALSE])
+#test$PitFinalLap <- as.numeric(test$PitFinalLap) - 1
+dtestfinal  <- xgb.DMatrix(data = X_test)
+pred_prob_xg <- predict(xgb_model, dtestfinal)
+# Evaluation
+
+submissionfileXG <- data.frame(id = test$id, PitNextLap = pred_prob_xg)
+write.csv(submissionfileXG, file = "F1SubmissionXGTuned.csv", row.names = FALSE)
+```
+
+```{r NeuralNetwork, echo = FALSE}
+# Create a new conda environment (recommended)
+library(reticulate)
+library(keras3)
+library(dplyr)
+
+# 1. Activate the existing environment
+use_condaenv("r-reticulate", required = TRUE)
+
+# 2. Install TensorFlow + Keras into this environment
+install_keras(
+  method = "conda",
+  envname = "r-reticulate",     # use the existing one
+  tensorflow = "2.17"           # stable version
+)
+
+library(keras3)
+library(reticulate)
+use_condaenv("r-reticulate", required = TRUE)
+
+# Import tensorflow explicitly
+tf <- import("tensorflow")
+
+# ====================== DATA PREPARATION ======================
+X_train_scaled <- as.matrix(X_train)
+X_test_scaled  <- as.matrix(X_test)
+
+y_train <- as.matrix(as.factor(as.numeric(trainlocal$PitNextLap)-1))
+y_test  <- as.matrix(as.factor(as.numeric(testlocal$PitNextLap)-1))
+
+pos_weight <- sum(y_train == 0) / sum(y_train == 1)
+
+cat("Positive weight:", round(pos_weight, 2), "\n")
+
+# ====================== BUILD MODEL ======================
+model <- keras_model_sequential()
+
+model$add(layer_dense(units = 256, activation = "relu", 
+                      input_shape = ncol(X_train_scaled)))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.4))
+
+model$add(layer_dense(units = 128, activation = "relu"))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.35))
+
+model$add(layer_dense(units = 64, activation = "relu"))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.3))
+
+model$add(layer_dense(units = 1, activation = "sigmoid"))
+
+# ====================== COMPILE ======================
+model$compile(
+  optimizer = optimizer_adam(learning_rate = 0.001),
+  loss = "binary_crossentropy",
+  metrics = c("accuracy", metric_auc(name = "auc"))
+)
+
+summary(model)
+class_weights <- reticulate::dict("0" = 1.0, "1" = pos_weight * 1.3)
+# ====================== TRAIN ======================
+history <- model$fit(
+  x = tf$convert_to_tensor(X_train_scaled, dtype = "float32"),
+  y = tf$convert_to_tensor(y_train, dtype = "float32"),
+  epochs = as.integer(60),
+  batch_size = as.integer(1024),
+  validation_data = list(
+    tf$convert_to_tensor(X_test_scaled, dtype = "float32"),
+    tf$convert_to_tensor(y_test, dtype = "float32")
+  ),
+  class_weight = class_weights,
+  callbacks = list(
+    callback_early_stopping(
+      monitor = "val_auc",
+      patience = 15,
+      restore_best_weights = TRUE,
+      mode = "max"
+    )
+  ),
+  verbose = 1
+)
+
+# ====================== PREDICTIONS ======================
+pred_prob <- model$predict(
+  tf$convert_to_tensor(X_test_scaled, dtype = "float32")
+) %>% as.vector()
+
+# Threshold tuning
+thresholds <- seq(0.25, 0.60, by = 0.01)
+
+results <- data.frame()
+
+for(th in thresholds){
+  pred_class <- ifelse(pred_prob > th, 1, 0)
+  
+  cm <- confusionMatrix(
+    factor(pred_class, levels = c(0,1)),
+    factor(testlocal$PitNextLap, levels = c(0,1)), 
+    positive = "1"
+  )
+  
+  results <- rbind(results, data.frame(
+    threshold = th,
+    recall    = cm$byClass["Recall"],
+    precision = cm$byClass["Precision"],
+    f1        = cm$byClass["F1"]
+  ))
+}
+
+print(results[order(results$f1, decreasing = TRUE), ][1:8, ])
+
+best_th <- results$threshold[which.max(results$f1)]
+cat("\nBest threshold (by F1):", best_th, "\n")
+
+```
+
+Amazing results here with perfect precision and near perfect recall and f1 scores. I will now run this on the full data set and submit to kaggle.
+
+```{r NeuralNetSubmission, echo = FALSE}
+library(keras3)
+library(reticulate)
+
+use_condaenv("r-reticulate", required = TRUE)
+
+install_keras(
+  method = "conda",
+  envname = "r-reticulate",     # use the existing one
+  tensorflow = "2.17"           # stable version
+)
+
+library(keras3)
+library(reticulate)
+
+use_condaenv("r-reticulate", required = TRUE)
+
+# Import tensorflow explicitly
+tf <- import("tensorflow")
+
+train_idx <- sample(1:nrow(train), size = round(nrow(train)*0.7))
+trainlocal <- train[train_idx,-c(1,2)]
+testlocal <- train[-train_idx,-c(1,2)]
+
+# Make sure target is 0/1 numeric
+trainlocal$PitNextLap <- as.numeric(trainlocal$PitNextLap)-1 # Important: 0 and 1
+testlocal$PitNextLap <- as.numeric(testlocal$PitNextLap) -1
+
+# Identify categorical variables
+cat_vars <- names(trainlocal)[sapply(trainlocal, function(x) is.factor(x) || is.character(x))]
+
+# ====================== FEATURE PREPARATION ======================
+if(length(cat_vars) > 0){
+  
+  # Train dummies
+  cat_data_train <- as.data.frame(trainlocal[, cat_vars, drop = FALSE])
+  dummies <- dummyVars(~ ., data = cat_data_train)
+  dummy_train <- predict(dummies, cat_data_train)
+  
+  # Numeric columns
+  num_cols <- setdiff(names(trainlocal), c(cat_vars, "PitNextLap"))
+  X_train <- cbind(as.data.frame(trainlocal[, num_cols, drop = FALSE]), dummy_train)
+  
+  # Test dummies (using same dummy structure)
+  cat_data_test <- as.data.frame(testlocal[, cat_vars, drop = FALSE])
+  dummy_test <- predict(dummies, cat_data_test)
+  X_test <- cbind(as.data.frame(testlocal[, num_cols, drop = FALSE]), dummy_test)
+  
+} else {
+  X_train <- as.data.frame(trainlocal %>% select(-PitNextLap))
+  X_test  <- as.data.frame(testlocal %>% select(-PitNextLap))
+}
+# ====================== FIX FEATURE ALIGNMENT ======================
+
+# Make sure test has exactly the same columns as train (in same order)
+common_cols <- intersect(names(X_train), names(X_test))
+
+# Add missing columns to test (filled with 0)
+missing_in_test <- setdiff(names(X_train), names(X_test))
+for (col in missing_in_test) {
+  X_test[[col]] <- 0
+}
+
+# Add missing columns to train (just in case)
+missing_in_train <- setdiff(names(X_test), names(X_train))
+for (col in missing_in_train) {
+  X_train[[col]] <- 0
+}
+
+# Re-order test columns to match train exactly
+X_test <- X_test[, names(X_train), drop = FALSE]
+
+tf <- import("tensorflow")
+
+# ====================== DATA PREPARATION ======================
+X_train_scaled <- as.matrix(X_train)
+X_test_scaled  <- as.matrix(X_test)
+
+y_train <- as.matrix(as.factor(as.numeric(trainlocal$PitNextLap)))
+y_test  <- as.matrix(as.factor(as.numeric(testlocal$PitNextLap)))
+
+pos_weight <- sum(y_train == 0) / sum(y_train == 1)
+
+cat("Positive weight:", round(pos_weight, 2), "\n")
+
+# ====================== BUILD MODEL ======================
+model <- keras_model_sequential()
+
+model$add(layer_dense(units = 256, activation = "relu", 
+                      input_shape = ncol(X_train_scaled)))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.4))
+
+model$add(layer_dense(units = 128, activation = "relu"))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.35))
+
+model$add(layer_dense(units = 64, activation = "relu"))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.3))
+
+model$add(layer_dense(units = 1, activation = "sigmoid"))
+
+# ====================== COMPILE ======================
+model$compile(
+  optimizer = optimizer_adam(learning_rate = 0.001),
+  loss = "binary_crossentropy",
+  metrics = c("accuracy", metric_auc(name = "auc"))
+)
+
+summary(model)
+class_weights <- reticulate::dict("0" = 1.0, "1" = pos_weight * 1.3)
+# ====================== TRAIN ======================
+history <- model$fit(
+  x = tf$convert_to_tensor(X_train_scaled, dtype = "float32"),
+  y = tf$convert_to_tensor(y_train, dtype = "float32"),
+  epochs = as.integer(60),
+  batch_size = as.integer(1024),
+  validation_data = list(
+    tf$convert_to_tensor(X_test_scaled, dtype = "float32"),
+    tf$convert_to_tensor(y_test, dtype = "float32")
+  ),
+  class_weight = class_weights,
+  callbacks = list(
+    callback_early_stopping(
+      monitor = "val_auc",
+      patience = 15,
+      restore_best_weights = TRUE,
+      mode = "max"
+    )
+  ),
+  verbose = 1
+)
+
+# ====================== PREDICTIONS ======================
+pred_prob <- model$predict(
+  tf$convert_to_tensor(X_test_scaled, dtype = "float32")
+) %>% as.vector()
+
+# Threshold tuning
+thresholds <- seq(0.25, 0.60, by = 0.01)
+
+results <- data.frame()
+
+for(th in thresholds){
+  pred_class <- ifelse(pred_prob > th, 1, 0)
+  
+  cm <- confusionMatrix(
+    factor(pred_class, levels = c(0,1)),
+    factor(testlocal$PitNextLap, levels = c(0,1)), 
+    positive = "1"
+  )
+  
+  results <- rbind(results, data.frame(
+    threshold = th,
+    recall    = cm$byClass["Recall"],
+    precision = cm$byClass["Precision"],
+    f1        = cm$byClass["F1"]
+  ))
+}
+
+print(results[order(results$f1, decreasing = TRUE), ][1:8, ])
+
+best_th <- results$threshold[which.max(results$f1)]
+cat("\nBest threshold (by F1):", best_th, "\n")
+
+cat_data_test <- as.data.frame(test[, cat_vars, drop = FALSE])
+dummy_test <- predict(dummies, cat_data_test)
+X_test <- cbind(as.data.frame(test[, num_cols, drop = FALSE]), dummy_test)
+X_test_mat <- as.matrix(X_test)
+pred_prob <- model$predict(
+  tf$convert_to_tensor(X_test_mat, dtype = "float32")
+) %>% as.vector()
+
+pred_class <- ifelse(pred_prob > best_th, 1, 0)
+
+NN_pred_class <- pred_class
+submissionfileNN <- data.frame(id = test$id, PitNextLap = NN_pred_class)
+write.csv(submissionfileNN, file = "F1SubmissionNNKeras.csv", row.names = FALSE)
+```
+
+This first attempt on the Neural Network resulted in an 87.57% prediction accuracy, good but worse than XGBoost.
+
+Now its time to tune it.
+
+```{r NN_Visualisation, echo = FALSe}
+# 1. Training History (Learning Curves)
+# Extract the metrics properly
+h <- history$history   # this is usually a Python dict
+
+# Convert to R data frame
+epochs <- seq_along(h$loss)
+
+history_df <- data.frame(
+  epoch = epochs,
+  loss = as.numeric(h$loss),
+  val_loss = as.numeric(h$val_loss),
+  auc = as.numeric(h$auc),
+  val_auc = as.numeric(h$val_auc)
+)
+
+print(head(history_df))
+
+# Plot Loss
+plot(history_df$epoch, history_df$loss, type = "l", col = "blue", 
+     xlab = "Epoch", ylab = "Loss", main = "Training History - Loss")
+lines(history_df$epoch, history_df$val_loss, col = "red")
+legend("topright", c("Train Loss", "Val Loss"), col = c("blue", "red"), lty = 1)
+
+# Plot AUC
+plot(history_df$epoch, history_df$auc, type = "l", col = "blue", 
+     xlab = "Epoch", ylab = "AUC", main = "Training History - AUC")
+lines(history_df$epoch, history_df$val_auc, col = "red")
+legend("bottomright", c("Train AUC", "Val AUC"), col = c("blue", "red"), lty = 1)
+
+# 2. Best Validation AUC
+cat("Best Val AUC:", max(history$metrics$val_auc), "\n")
+
+# 3. Confusion Matrix at best threshold
+pred_prob <- model$predict(tf$convert_to_tensor(X_test_scaled, dtype = "float32")) %>% as.vector()
+best_th <- 0.40   # start here, tune later
+
+pred_class <- ifelse(pred_prob > best_th, 1, 0)
+cm <- confusionMatrix(factor(pred_class, levels = c(0,1)),
+                      factor(testlocal$PitNextLap, levels = c(0,1)), 
+                      positive = "1")
+print(cm)
+```
+
+As we can see from the Train and Validation AUC plot as well as the loss plot, 60 epochs was not enough for the model to converge, hence we will run it for 300 and add one extra layer at the start.
+
+```{r NNTuned, echo = FALSE}
+tf <- import("tensorflow")
+
+# ====================== DATA PREPARATION ======================
+X_train_scaled <- as.matrix(X_train)
+X_test_scaled  <- as.matrix(X_test)
+
+y_train <- as.matrix(as.factor(as.numeric(trainlocal$PitNextLap)))
+y_test  <- as.matrix(as.factor(as.numeric(testlocal$PitNextLap)))
+
+pos_weight <- sum(y_train == 0) / sum(y_train == 1)
+
+cat("Positive weight:", round(pos_weight, 2), "\n")
+
+# ====================== BUILD MODEL ======================
+model <- keras_model_sequential()
+
+model$add(layer_dense(units = 512, activation = "relu", 
+                      input_shape = ncol(X_train_scaled)))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.4))
+
+model$add(layer_dense(units = 256, activation = "relu"))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.4))
+
+model$add(layer_dense(units = 128, activation = "relu"))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.35))
+
+model$add(layer_dense(units = 64, activation = "relu"))
+model$add(layer_batch_normalization())
+model$add(layer_dropout(rate = 0.3))
+
+model$add(layer_dense(units = 1, activation = "sigmoid"))
+
+# ====================== COMPILE ======================
+model$compile(
+  optimizer = optimizer_adam(learning_rate = 0.0005),   # lower than before
+  loss = "binary_crossentropy",
+  metrics = c("accuracy", metric_auc(name = "auc"))
+)
+
+summary(model)
+class_weights <- reticulate::dict("0" = 1.0, "1" = pos_weight * 1.3)
+# ====================== TRAIN ======================
+# ====================== IMPROVED TRAINING ======================
+
+history <- model$fit(
+  x = tf$convert_to_tensor(X_train_scaled, dtype = "float32"),
+  y = tf$convert_to_tensor(y_train, dtype = "float32"),
+  epochs = as.integer(300),           # Much higher
+  batch_size = as.integer(1024),
+  validation_data = list(
+    tf$convert_to_tensor(X_test_scaled, dtype = "float32"),
+    tf$convert_to_tensor(y_test, dtype = "float32")
+  ),
+  class_weight = class_weights,   # slight increase
+  
+  # === Key additions ===
+  callbacks = list(
+    callback_early_stopping(
+      monitor = "val_auc",
+      patience = 40,                    # more patient
+      restore_best_weights = TRUE,
+      mode = "max"
+    ),
+    # Reduce learning rate when progress slows
+    callback_reduce_lr_on_plateau(
+      monitor = "val_auc",
+      factor = 0.5,
+      patience = 15,
+      min_lr = 0.00001,
+      verbose = 1
+    )
+  ),
+  verbose = 1
+)
+
+# ====================== PREDICTIONS ======================
+pred_prob <- model$predict(
+  tf$convert_to_tensor(X_test_scaled, dtype = "float32")
+) %>% as.vector()
+
+# Threshold tuning
+thresholds <- seq(0.25, 0.60, by = 0.01)
+
+results <- data.frame()
+
+for(th in thresholds){
+  pred_class <- ifelse(pred_prob > th, 1, 0)
+  
+  cm <- confusionMatrix(
+    factor(pred_class, levels = c(0,1)),
+    factor(testlocal$PitNextLap, levels = c(0,1)), 
+    positive = "1"
+  )
+  
+  results <- rbind(results, data.frame(
+    threshold = th,
+    recall    = cm$byClass["Recall"],
+    precision = cm$byClass["Precision"],
+    f1        = cm$byClass["F1"]
+  ))
+}
+
+print(results[order(results$f1, decreasing = TRUE), ][1:8, ])
+
+best_th <- results$threshold[which.max(results$f1)]
+cat("\nBest threshold (by F1):", best_th, "\n")
+
+cat_data_test <- as.data.frame(test[, cat_vars, drop = FALSE])
+dummy_test <- predict(dummies, cat_data_test)
+X_test <- cbind(as.data.frame(test[, num_cols, drop = FALSE]), dummy_test)
+X_test_mat <- as.matrix(X_test)
+pred_prob_NN <- model$predict(
+  tf$convert_to_tensor(X_test_mat, dtype = "float32")
+) %>% as.vector()
+
+pred_class <- ifelse(pred_prob > 0.5, 1, 0)
+
+submissionfileNN <- data.frame(id = test$id, PitNextLap = pred_prob_NN)
+write.csv(submissionfileNN, file = "F1SubmissionNNKerasTuned.csv", row.names = FALSE)
+```
+
+Lets try an ensemble of XGBoost and Neural Network, as ensembles are usually better for prediction than individual models as they usually capture different information in which a combination of the two can be beneficial for predict
+
+## Ensemble
+
+```{r Ensembles, echo = FALSE}
+pred_ensemble <- 0.65 * pred_prob_xg + 0.35 * pred_prob_NN   # tune these weights
+pred_ensemble <- 0.5 * pred_prob_xg + 0.5 * pred_prob_NN 
+pred_ensemble <- 0.35 * pred_prob_xg + 0.65 * pred_prob_NN 
+pred_ensemble <- 0.55 * pred_prob_xg + 0.45 * pred_prob_NN 
+pred_ensemble <- 0.6 * pred_prob_xg + 0.4 * pred_prob_NN 
+
+xgPreddf <- read.csv("F1SubmissionXGTuned.csv")
+RFPreddf <- read.csv("F1SubmissionRandomForest.csv")
+NNPreddf <- read.csv("F1SubmissionNNKerasTuned.csv")
+
+pred_xg_NN_RF <- 0.5*xgPreddf$PitNextLap + 0.25*NNPreddf$PitNextLap + 0.25*RFPreddf$PitNextLap
+
+
+submissionfileEnsemble <- data.frame(id = test$id, PitNextLap = pred_xg_NN_RF)
+write.csv(submissionfileEnsemble, file = "F1SubmissionEnsembleXG_RF_NN.csv", row.names = FALSE)
+
+
+#Grok recommneded I try a different ratio based off of each model types individual strength
+pred_xg_NN_RFGrok <- 0.5*xgPreddf$PitNextLap + 0.15*NNPreddf$PitNextLap + 0.35*RFPreddf$PitNextLap
+
+
+submissionfileEnsemble <- data.frame(id = test$id, PitNextLap = pred_xg_NN_RFGrok)
+write.csv(submissionfileEnsemble, file = "F1SubmissionEnsembleXG_RF_NN_Grok.csv", row.names = FALSE)
+
+predict_reg2
+
+#Final ensemble with logistic classification included as well
+
+pred_xg_NN_RF_LogGrok <- 0.5*xgPreddf$PitNextLap + 0.1*NNPreddf$PitNextLap + 0.3*RFPreddf$PitNextLap + 0.1*predict_reg2
+
+
+submissionfileEnsemble <- data.frame(id = test$id, PitNextLap = pred_xg_NN_RF_LogGrok)
+write.csv(submissionfileEnsemble, file = "F1SubmissionEnsembleXG_RF_NN_Log.csv", row.names = FALSE)
+```
+
+
+Prediction was 94.62% on the kaggle test set, our best AUC so far and we will leave it at that. Currently within 1% of the number one spot and to avoid overfitting to the test set we will leave it as is.
+
+
+
+```{r eval=FALSE, EnsembleTune, echo=FALSE, include=FALSE}
+traindata <- train[train_idx,-c(1,2)]
+testdata<- train[-train_idx,-c(1,2)]
+#traindata$PitNextLap <- as.numeric(traindata$PitNextLap) - 1 # Important: 0 and 1
+#testdata$PitNextLap  <- as.numeric(testdata$PitNextLap) - 1
+
+set.seed(123) # For reproducibility
+k <- 5
+data <- traindata
+
+# 2. Create Fold Indices
+folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
+errors <- numeric(k)
+thresholds <- seq(0.25, 0.55, by = 0.05)
+prediction_mat <- matrix(0, nrow = k, ncol = length(thresholds)*2)
+
+ensemble_ratios <- c(0.35,0.4,0.45,0.5)
+# 3. Perform Cross-Validation
+for(i in 1:k) {
+    # Split into train and test
+    test_indices <- which(folds == i, arr.ind = TRUE)
+    testlocal <- data[test_indices, ]
+    trainlocal <- data[-test_indices, ]
+    
+    # Identify categorical variables
+    cat_vars <- names(trainlocal)[sapply(trainlocal, function(x) is.factor(x) || is.character(x))]
+    
+    # ====================== FEATURE PREPARATION ======================
+    if(length(cat_vars) > 0){
+      
+      # Train dummies
+      cat_data_train <- as.data.frame(trainlocal[, cat_vars, drop = FALSE])
+      dummies <- dummyVars(~ ., data = cat_data_train)
+      dummy_train <- predict(dummies, cat_data_train)
+      
+      # Numeric columns
+      num_cols <- setdiff(names(trainlocal), c(cat_vars, "PitNextLap"))
+      X_train <- cbind(as.data.frame(trainlocal[, num_cols, drop = FALSE]), dummy_train)
+      
+      # Test dummies (using same dummy structure)
+      cat_data_test <- as.data.frame(testlocal[, cat_vars, drop = FALSE])
+      dummy_test <- predict(dummies, cat_data_test)
+      X_test <- cbind(as.data.frame(testlocal[, num_cols, drop = FALSE]), dummy_test)
+      
+    } else {
+      X_train <- as.data.frame(trainlocal %>% select(-PitNextLap))
+      X_test  <- as.data.frame(testlocal %>% select(-PitNextLap))
+    }
+    # ====================== FIX FEATURE ALIGNMENT ======================
+    
+    # Make sure test has exactly the same columns as train (in same order)
+    common_cols <- intersect(names(X_train), names(X_test))
+    
+    # Add missing columns to test (filled with 0)
+    missing_in_test <- setdiff(names(X_train), names(X_test))
+    for (col in missing_in_test) {
+      X_test[[col]] <- 0
+    }
+    
+    # Add missing columns to train (just in case)
+    missing_in_train <- setdiff(names(X_test), names(X_train))
+    for (col in missing_in_train) {
+      X_train[[col]] <- 0
+    }
+    
+    # Re-order test columns to match train exactly
+    X_test <- X_test[, names(X_train), drop = FALSE]
+    
+    # Now create DMatrix again
+    dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = trainlocal$PitNextLap)
+    dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = testlocal$PitNextLap)
+    
+    cat("Feature alignment fixed. Total features:", ncol(X_train), "\n")
+    
+    # ====================== CLASS IMBALANCE ======================
+    pos_weight <- sum(trainlocal$PitNextLap == 0) / sum(trainlocal$PitNextLap == 1)
+    cat("scale_pos_weight:", round(pos_weight, 2), "\n")
+    
+    # ====================== CHECK CLASS DISTRIBUTION ======================
+    cat("Train class distribution:\n")
+    print(table(trainlocal$PitNextLap))
+    cat("Test class distribution:\n")
+    print(table(testlocal$PitNextLap))
+    
+    
+    # ====================== XGBoost MODEL TRAINING ======================
+    params <- list(
+      objective         = "binary:logistic",
+      eval_metric       = "auc",          # changed from logloss
+      eta               = 0.03,           # decreased from 0.05 for a slower learning rate
+      max_depth         = 7,              # increased from 6
+      subsample         = 0.85,           # increased from 0.8
+      colsample_bytree  = 0.75,           # increased from 0.8
+      scale_pos_weight  = pos_weight, 
+      gamma             = 0.5,            
+      min_child_weight  = 3,
+      max_delta_step    = 1,
+      nthread           = parallel::detectCores() - 1
+    )
+    
+    set.seed(123)
+    
+    xgb_model <- xgb.train(
+      params            = params,
+      data              = dtrain,
+      nrounds           = 500,
+      watchlist         = list(train = dtrain, test = dtest),
+      early_stopping_rounds = 80,
+      verbose           = 20
+    )
+    
+    # ====================== XGBoost PREDICTIONS ======================
+    pred_probXG <- predict(xgb_model, dtest)
+    
+    # ====================== Neural Net Model Training ======================
+    X_train_scaled <- as.matrix(X_train)
+    X_test_scaled  <- as.matrix(X_test)
+    
+    y_train <- as.matrix(as.factor(trainlocal$PitNextLap))
+    y_test  <- as.matrix(as.factor(testlocal$PitNextLap))
+    
+    pos_weight <- sum(y_train == 0) / sum(y_train == 1)
+    
+    cat("Positive weight:", round(pos_weight, 2), "\n")
+    
+    # ====================== BUILD MODEL ======================
+    model <- keras_model_sequential()
+    
+    model$add(layer_dense(units = 512, activation = "relu", 
+                          input_shape = ncol(X_train_scaled)))
+    model$add(layer_batch_normalization())
+    model$add(layer_dropout(rate = 0.4))
+    
+    model$add(layer_dense(units = 256, activation = "relu"))
+    model$add(layer_batch_normalization())
+    model$add(layer_dropout(rate = 0.4))
+    
+    model$add(layer_dense(units = 128, activation = "relu"))
+    model$add(layer_batch_normalization())
+    model$add(layer_dropout(rate = 0.35))
+    
+    model$add(layer_dense(units = 64, activation = "relu"))
+    model$add(layer_batch_normalization())
+    model$add(layer_dropout(rate = 0.3))
+    
+    model$add(layer_dense(units = 1, activation = "sigmoid"))
+    
+    # ====================== COMPILE ======================
+    model$compile(
+      optimizer = optimizer_adam(learning_rate = 0.0005),   # lower than before
+      loss = "binary_crossentropy",
+      metrics = c("accuracy", metric_auc(name = "auc"))
+    )
+    
+    class_weights <- reticulate::dict("0" = 1.0, "1" = pos_weight)
+    # ====================== TRAIN ======================
+    # ====================== IMPROVED TRAINING ======================
+    
+    history <- model$fit(
+      x = tf$convert_to_tensor(X_train_scaled, dtype = "float32"),
+      y = tf$convert_to_tensor(y_train, dtype = "float32"),
+      epochs = as.integer(300),           # Much higher
+      batch_size = as.integer(1024),
+      validation_data = list(
+        tf$convert_to_tensor(X_test_scaled, dtype = "float32"),
+        tf$convert_to_tensor(y_test, dtype = "float32")
+      ),
+      class_weight = class_weights,   # slight increase
+      
+      # === Key additions ===
+      callbacks = list(
+        callback_early_stopping(
+          monitor = "val_auc",
+          patience = 40,                    # more patient
+          restore_best_weights = TRUE,
+          mode = "max"
+        ),
+        # Reduce learning rate when progress slows
+        callback_reduce_lr_on_plateau(
+          monitor = "val_auc",
+          factor = 0.5,
+          patience = 15,
+          min_lr = 0.00001,
+          verbose = 1
+        )
+      ),
+      verbose = 1
+    )
+    
+    # ====================== PREDICTIONS ======================
+    pred_probNN <- model$predict(
+      tf$convert_to_tensor(X_test_scaled, dtype = "float32")
+    ) %>% as.vector()
+    
+    
+    
+    # Testing different ensemble ratios
+    pred_XGVvals <- pred_probXG*ensemble_ratios + pred_probNN*(1-ensemble_ratios)
+    pred_NNVvals <- pred_probXG*(1-ensemble_ratios) + pred_probNN*ensemble_ratios
+    pred_prob_ensemble <- c(pred_XGVvals, pred_NNVvals)
+    ratio_names <- c(ensemble_ratios, (1-ensemble_ratios), (1-ensemble_ratios), ensemble_ratios)
+    
+
+
+    # Try different thresholds
+    pred_num <- 1
+    len_ens <- length(ensemble_ratios)
+    pred_mat <- matrix(0, nrow = k, ncol = length(ratio_names)*length(thresholds)*2)
+    matcol <- 1
+    for(pred in pred_prob_ensemble){
+      pred_comb <- c(ratio_names[pred_num],ratio_names[pred_num+len_ens])
+      for(th in thresholds){
+        pred_class <- ifelse(pred > th, 1, 0)
+        accuracy_score <- sum(testlocal$PitNextLap == pred_class)/nrow(testlocal)
+        true_positives <- testlocal$PitNextLap[which(testlocal$PitNextLap == 1)]
+        recall <- sum(true_positives == pred_class[which(testlocal$PitNextLap == 1)])/length(true_positives)
+        prediction_mat[i, thcol] <- accuracy_score
+        prediction_mat[i, thcol+1] <- recall
+        cat("Accuracy Score of:", accuracy_score, "threshold:",th, "ratio:", pred_comb, "\n")
+        cat("Recall Score of:", recall, "\n")
+        matcol <- matcol + 2
+      }
+      pred_num <- pred_num + 1
+    }
+
+}
+
+```
